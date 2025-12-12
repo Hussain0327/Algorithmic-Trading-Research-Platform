@@ -24,6 +24,7 @@ A backtesting system for testing trading strategies against historical market da
 This project tests whether trading strategies actually outperform random chance. It combines backtesting with statistical significance testing to separate real edges from noise.
 
 **Core workflow:**
+
 1. Fetch historical price data
 2. Generate buy/sell signals using a strategy
 3. Simulate trades with transaction costs
@@ -33,35 +34,48 @@ This project tests whether trading strategies actually outperform random chance.
 
 ## Features
 
-| Feature | Description |
-|---------|-------------|
-| Multiple Strategies | MA Crossover, RSI, Momentum, Pairs Trading, Bollinger Bands |
-| Train/Test Split | Validates strategies on unseen data |
-| Statistical Testing | Bootstrap CI, permutation tests, Monte Carlo simulation |
-| Benchmark Comparison | Compare against buy-and-hold baseline |
-| Interactive Dashboard | Streamlit UI for parameter tuning |
-| Cost Modeling | Commission and slippage simulation |
+| Feature               | Description                                                 |
+| --------------------- | ----------------------------------------------------------- |
+| Multiple Strategies   | MA Crossover, RSI, Momentum, Pairs Trading, Bollinger Bands |
+| Train/Test Split      | Validates strategies on unseen data                         |
+| Statistical Testing   | Bootstrap CI, permutation tests, Monte Carlo simulation     |
+| Benchmark Comparison  | Compare against buy-and-hold baseline                       |
+| Interactive Dashboard | Streamlit UI for parameter tuning                           |
+| Cost Modeling         | Commission and slippage simulation                          |
 
 ---
 
 ## Installation
 
+**Requirements:** Python 3.9+
+
 ```bash
-git clone https://github.com/yourusername/algorithmic-trading-research.git
+# Clone the repository
+git clone https://github.com/Hussain0327/algorithmic-trading-research.git
 cd algorithmic-trading-research
+
+# Create and activate a virtual environment (recommended)
+python3 -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+
+# Install dependencies
 pip install -r requirements.txt
 ```
+
+> **Note:** If you get `ModuleNotFoundError`, make sure you've activated your virtual environment and run `pip install -r requirements.txt`.
 
 ---
 
 ## Usage
 
 **Command Line:**
+
 ```bash
 python main.py
 ```
 
 **Dashboard:**
+
 ```bash
 streamlit run app.py
 ```
@@ -72,13 +86,13 @@ streamlit run app.py
 
 ## Strategies
 
-| Strategy | Type | Logic |
-|----------|------|-------|
-| **MA Crossover** | Trend-following | Buy when short MA > long MA |
-| **RSI** | Mean reversion | Buy oversold, sell overbought |
-| **Momentum** | Trend-following | Trade in direction of recent returns |
-| **Pairs Trading** | Statistical arbitrage | Mean reversion on z-score spread |
-| **Bollinger Bands** | Mean reversion | Buy at lower band, sell at mean |
+| Strategy            | Type                  | Logic                                |
+| ------------------- | --------------------- | ------------------------------------ |
+| **MA Crossover**    | Trend-following       | Buy when short MA > long MA          |
+| **RSI**             | Mean reversion        | Buy oversold, sell overbought        |
+| **Momentum**        | Trend-following       | Trade in direction of recent returns |
+| **Pairs Trading**   | Statistical arbitrage | Mean reversion on z-score spread     |
+| **Bollinger Bands** | Mean reversion        | Buy at lower band, sell at mean      |
 
 ---
 
@@ -86,13 +100,14 @@ streamlit run app.py
 
 Every backtest runs three significance tests:
 
-| Test | Question |
-|------|----------|
-| **Sharpe CI** | Is the Sharpe ratio significantly different from zero? |
-| **Permutation Test** | Does it beat buy-and-hold? |
-| **Monte Carlo** | Does it beat random entry/exit? |
+| Test                 | Question                                               |
+| -------------------- | ------------------------------------------------------ |
+| **Sharpe CI**        | Is the Sharpe ratio significantly different from zero? |
+| **Permutation Test** | Does it beat buy-and-hold?                             |
+| **Monte Carlo**      | Does it beat random entry/exit?                        |
 
 **Interpretation:**
+
 - 3/3 pass → Strong evidence of edge
 - 2/3 pass → Needs more investigation
 - 0-1/3 pass → Likely noise
@@ -130,14 +145,14 @@ Every backtest runs three significance tests:
 
 ## Tech Stack
 
-| Component | Technology |
-|-----------|------------|
-| Language | Python |
-| Data | pandas, numpy |
-| Statistics | scipy |
-| Market Data | yfinance |
-| Dashboard | Streamlit |
-| Visualization | Plotly |
+| Component     | Technology    |
+| ------------- | ------------- |
+| Language      | Python        |
+| Data          | pandas, numpy |
+| Statistics    | scipy         |
+| Market Data   | yfinance      |
+| Dashboard     | Streamlit     |
+| Visualization | Plotly        |
 
 ---
 
