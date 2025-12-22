@@ -6,6 +6,11 @@ performance is statistically significant or likely due to random chance.
 
 Key insight: A backtest showing 15% returns means nothing without knowing
 the probability that result occurred by chance.
+
+METHODOLOGY NOTES:
+- Block bootstrap preserves autocorrelation structure (Politis & Romano 1994)
+- Permutation tests assume exchangeability under null hypothesis
+- All tests document their assumptions explicitly
 """
 
 import numpy as np
@@ -14,50 +19,204 @@ from scipy import stats
 from typing import Dict, Tuple, Optional
 
 
+# =============================================================================
+# TEST ASSUMPTIONS DOCUMENTATION
+# =============================================================================
+
+BOOTSTRAP_ASSUMPTIONS = {
+    'name': 'Block Bootstrap Sharpe CI',
+    'assumes': [
+        'Returns are stationary (distribution does not change over time)',
+        'Finite variance (no infinite-variance fat tails)',
+        'Block size captures relevant autocorrelation structure'
+    ],
+    'preserves': [
+        'Autocorrelation within blocks',
+        'Marginal distribution of returns'
+    ],
+    'does_not_account_for': [
+        'Multiple testing (run many strategies, pick best)',
+        'Regime changes (bull/bear market shifts)',
+        'Look-ahead bias in strategy construction'
+    ]
+}
+
+PERMUTATION_ASSUMPTIONS = {
+    'name': 'Permutation Test vs Benchmark',
+    'assumes': [
+        'Strategy and benchmark returns are exchangeable under H0',
+        'Returns within each series may be dependent',
+        'Both series cover the same time period'
+    ],
+    'preserves': [
+        'Sample sizes of each group',
+        'Pooled distribution of all returns'
+    ],
+    'does_not_account_for': [
+        'Time-series structure (shuffles across time)',
+        'Different risk profiles (vol, skew, kurtosis)',
+        'Transaction costs already embedded in strategy returns'
+    ],
+    'null_hypothesis': 'Strategy returns come from same distribution as benchmark'
+}
+
+MONTE_CARLO_ASSUMPTIONS = {
+    'name': 'Monte Carlo vs Random Trading',
+    'assumes': [
+        'Random entry/exit points are uniformly distributed',
+        'Number of trades similar to strategy',
+        'Same capital and cost structure'
+    ],
+    'preserves': [
+        'Price path (same underlying data)',
+        'Approximate trade frequency'
+    ],
+    'does_not_account_for': [
+        'Signal-based entry timing',
+        'Correlation between strategy signals and price moves',
+        'Survivorship bias in price data'
+    ],
+    'null_hypothesis': 'Strategy performs no better than random entry/exit'
+}
+
+def get_test_assumptions() -> Dict[str, Dict]:
+    """Return assumptions for all significance tests."""
+    return {
+        'bootstrap': BOOTSTRAP_ASSUMPTIONS,
+        'permutation': PERMUTATION_ASSUMPTIONS,
+        'monte_carlo': MONTE_CARLO_ASSUMPTIONS
+    }
+
+
+# =============================================================================
+# BLOCK BOOTSTRAP (preserves autocorrelation)
+# =============================================================================
+
+def estimate_block_size(returns: pd.Series) -> int:
+    """
+    Estimate optimal block size for block bootstrap.
+
+    Uses the rule of thumb: block_size ~ n^(1/3) for weakly dependent data.
+    Also considers autocorrelation decay.
+
+    References:
+    - Politis & Romano (1994) - Stationary Bootstrap
+    - Lahiri (2003) - Resampling Methods for Dependent Data
+    """
+    n = len(returns)
+    if n < 20:
+        return max(2, n // 4)
+
+    # Rule of thumb for weakly dependent data
+    block_size = int(np.ceil(n ** (1/3)))
+
+    # Adjust based on autocorrelation if significant
+    try:
+        acf_1 = returns.autocorr(lag=1)
+        if pd.notna(acf_1) and abs(acf_1) > 0.1:
+            # Higher autocorrelation -> larger blocks
+            block_size = int(block_size * (1 + abs(acf_1)))
+    except:
+        pass
+
+    return max(2, min(block_size, n // 4))
+
+
+def block_bootstrap_sample(returns: np.ndarray, block_size: int) -> np.ndarray:
+    """
+    Generate one block bootstrap sample.
+
+    Randomly selects blocks of consecutive observations and concatenates
+    them to form a resampled series of the same length.
+    """
+    n = len(returns)
+    n_blocks = int(np.ceil(n / block_size))
+
+    # Randomly select starting indices for blocks
+    max_start = n - block_size
+    if max_start < 0:
+        # Series too short for block bootstrap, fall back to i.i.d.
+        return np.random.choice(returns, size=n, replace=True)
+
+    starts = np.random.randint(0, max_start + 1, size=n_blocks)
+
+    # Build resampled series from blocks
+    resampled = []
+    for start in starts:
+        resampled.extend(returns[start:start + block_size])
+
+    return np.array(resampled[:n])
+
+
 def bootstrap_sharpe_confidence_interval(
     returns: pd.Series,
     n_bootstrap: int = 10000,
     confidence_level: float = 0.95,
-    risk_free_rate: float = 0.02
+    risk_free_rate: float = 0.02,
+    block_size: int = None,
+    method: str = 'block'
 ) -> Dict[str, float]:
     """
     Calculate bootstrap confidence interval for Sharpe ratio.
 
-    The Sharpe ratio from a single backtest is a point estimate.
-    This function provides confidence bounds to understand uncertainty.
+    Uses BLOCK BOOTSTRAP by default to preserve autocorrelation structure.
+    This is critical for financial returns which exhibit serial dependence.
 
     Args:
         returns: Daily returns series
         n_bootstrap: Number of bootstrap samples
         confidence_level: Confidence level (e.g., 0.95 for 95% CI)
         risk_free_rate: Annual risk-free rate
+        block_size: Block size for block bootstrap (auto-estimated if None)
+        method: 'block' (default, preserves autocorrelation) or 'iid' (naive)
 
     Returns:
-        Dict with point estimate and confidence bounds
+        Dict with point estimate, confidence bounds, and methodology info
+
+    References:
+        - Politis & Romano (1994) - The Stationary Bootstrap
+        - Ledoit & Wolf (2008) - Robust Performance Hypothesis Testing
+
+    Assumptions (see BOOTSTRAP_ASSUMPTIONS):
+        - Returns are stationary
+        - Finite variance
+        - Block size captures autocorrelation structure
     """
     returns = returns.dropna()
     if len(returns) < 20:
-        return {'sharpe': 0, 'ci_lower': 0, 'ci_upper': 0, 'std_error': 0}
+        return {
+            'sharpe': 0, 'ci_lower': 0, 'ci_upper': 0, 'std_error': 0,
+            'ci_includes_zero': True, 'method': method, 'block_size': None,
+            'assumptions': BOOTSTRAP_ASSUMPTIONS
+        }
 
     daily_rf = risk_free_rate / 252
-
-    def calc_sharpe(r):
-        excess = r - daily_rf
-        if excess.std() == 0:
-            return 0
-        return np.sqrt(252) * excess.mean() / excess.std()
-
-    point_estimate = calc_sharpe(returns)
-
-    # Bootstrap resampling
-    bootstrap_sharpes = []
     n = len(returns)
     returns_arr = returns.values
 
+    # Auto-estimate block size if not provided
+    if method == 'block' and block_size is None:
+        block_size = estimate_block_size(returns)
+
+    def calc_sharpe(r):
+        excess = r - daily_rf
+        if len(r) == 0 or np.std(excess) == 0:
+            return 0
+        return np.sqrt(252) * np.mean(excess) / np.std(excess)
+
+    point_estimate = calc_sharpe(returns_arr)
+
+    # Bootstrap resampling
+    bootstrap_sharpes = []
+
     for _ in range(n_bootstrap):
-        sample = np.random.choice(returns_arr, size=n, replace=True)
-        sample_series = pd.Series(sample)
-        bootstrap_sharpes.append(calc_sharpe(sample_series))
+        if method == 'block':
+            sample = block_bootstrap_sample(returns_arr, block_size)
+        else:
+            # Naive i.i.d. bootstrap (breaks autocorrelation - use with caution)
+            sample = np.random.choice(returns_arr, size=n, replace=True)
+
+        bootstrap_sharpes.append(calc_sharpe(sample))
 
     bootstrap_sharpes = np.array(bootstrap_sharpes)
     alpha = 1 - confidence_level
@@ -69,7 +228,11 @@ def bootstrap_sharpe_confidence_interval(
         'ci_lower': ci_lower,
         'ci_upper': ci_upper,
         'std_error': bootstrap_sharpes.std(),
-        'ci_includes_zero': ci_lower <= 0 <= ci_upper
+        'ci_includes_zero': ci_lower <= 0 <= ci_upper,
+        'method': method,
+        'block_size': block_size if method == 'block' else None,
+        'n_bootstrap': n_bootstrap,
+        'assumptions': BOOTSTRAP_ASSUMPTIONS
     }
 
 
@@ -82,10 +245,12 @@ def permutation_test_vs_baseline(
     """
     Permutation test to determine if strategy outperformance is significant.
 
-    Null hypothesis: Strategy and baseline returns come from the same distribution.
+    Tests whether the observed difference in performance could have arisen
+    by chance if strategy and baseline returns came from the same distribution.
 
-    This is more robust than t-tests because it doesn't assume normality,
-    which is important since financial returns often have fat tails.
+    IMPORTANT CAVEAT: This test shuffles returns i.i.d., which breaks
+    time-series dependence. The p-value should be interpreted as approximate.
+    For highly autocorrelated returns, consider block permutation methods.
 
     Args:
         strategy_returns: Strategy daily returns
@@ -94,7 +259,15 @@ def permutation_test_vs_baseline(
         metric: 'mean' for average return, 'sharpe' for risk-adjusted
 
     Returns:
-        Dict with test statistic and p-value
+        Dict with test statistic, p-value, and assumptions
+
+    Null Hypothesis:
+        Strategy and baseline returns are exchangeable (come from same distribution)
+
+    Assumptions (see PERMUTATION_ASSUMPTIONS):
+        - Exchangeability under H0
+        - Same time period coverage
+        - Shuffling i.i.d. is approximate for dependent data
     """
     strategy_returns = strategy_returns.dropna()
     baseline_returns = baseline_returns.dropna()
@@ -105,7 +278,10 @@ def permutation_test_vs_baseline(
     baseline_returns = baseline_returns.iloc[:min_len]
 
     if min_len < 10:
-        return {'observed_diff': 0, 'p_value': 1.0, 'significant': False}
+        return {
+            'observed_diff': 0, 'p_value': 1.0, 'significant_at_05': False,
+            'significant_at_01': False, 'assumptions': PERMUTATION_ASSUMPTIONS
+        }
 
     def calc_metric(r):
         if metric == 'sharpe':
@@ -137,43 +313,69 @@ def permutation_test_vs_baseline(
         'observed_diff': observed_diff,
         'p_value': p_value,
         'significant_at_05': p_value < 0.05,
-        'significant_at_01': p_value < 0.01
+        'significant_at_01': p_value < 0.01,
+        'metric_used': metric,
+        'n_permutations': n_permutations,
+        'assumptions': PERMUTATION_ASSUMPTIONS,
+        'caveat': 'i.i.d. permutation breaks time-series dependence; interpret cautiously'
     }
 
 
 def monte_carlo_under_null(
     prices: pd.Series,
     n_simulations: int = 1000,
-    strategy_return: float = None
+    strategy_return: float = None,
+    n_trades_observed: int = None
 ) -> Dict[str, float]:
     """
     Monte Carlo simulation to test if strategy beats random entry/exit.
 
     Generates random trading signals and computes distribution of returns
-    under the null hypothesis that the strategy has no edge.
+    under the null hypothesis that the strategy has no edge (random timing).
+
+    This answers: "Could I have achieved similar returns by trading randomly?"
 
     Args:
         prices: Price series used in backtest
         n_simulations: Number of random strategy simulations
         strategy_return: Actual strategy return to compare against
+        n_trades_observed: Number of trades in actual strategy (for matching)
 
     Returns:
-        Dict with null distribution statistics and p-value
+        Dict with null distribution statistics, p-value, and assumptions
+
+    Null Hypothesis:
+        Strategy performs no better than random entry/exit timing
+
+    Assumptions (see MONTE_CARLO_ASSUMPTIONS):
+        - Random entry/exit points uniformly distributed
+        - Trade count similar to actual strategy
+        - Same price path (no alternative universes)
     """
     prices = prices.dropna()
     if len(prices) < 20:
-        return {'p_value': 1.0, 'null_mean': 0, 'null_std': 0}
+        return {
+            'p_value': 1.0, 'null_mean': 0, 'null_std': 0,
+            'assumptions': MONTE_CARLO_ASSUMPTIONS
+        }
 
     random_returns = []
+    n = len(prices)
 
     for _ in range(n_simulations):
-        # Generate random signals
-        n = len(prices)
-        # Random number of trades (similar to typical strategy)
-        n_trades = np.random.randint(2, max(3, n // 20))
+        # Random number of trades (match observed if provided)
+        if n_trades_observed is not None:
+            n_trades = max(1, n_trades_observed // 2)  # pairs of buy/sell
+        else:
+            n_trades = np.random.randint(2, max(3, n // 20))
 
         # Random entry/exit points
-        trade_points = sorted(np.random.choice(range(1, n-1), size=min(n_trades * 2, n-2), replace=False))
+        n_points = min(n_trades * 2, n - 2)
+        if n_points < 2:
+            random_returns.append(0)
+            continue
+
+        trade_points = sorted(np.random.choice(range(1, n-1), size=n_points, replace=False))
 
         # Simulate random strategy
         capital = 10000
@@ -204,7 +406,9 @@ def monte_carlo_under_null(
         'null_std': null_std,
         'null_median': np.median(random_returns),
         'null_5th_percentile': np.percentile(random_returns, 5),
-        'null_95th_percentile': np.percentile(random_returns, 95)
+        'null_95th_percentile': np.percentile(random_returns, 95),
+        'n_simulations': n_simulations,
+        'assumptions': MONTE_CARLO_ASSUMPTIONS
     }
 
     if strategy_return is not None:
@@ -318,7 +522,7 @@ def strategy_significance_report(
             n_simulations=n_permutations,
             strategy_return=strategy_results['return_pct']
         ),
-        'return_distribution': test_return_distribution(strategy_returns)
+        'return_distribution': analyze_return_distribution(strategy_returns)
     }
 
     # Summary interpretation

@@ -7,3 +7,5 @@ venv/
 output/
 .DS_Store
 .streamlit/secrets.toml
+reports/*.html
+!reports/.gitkeep
